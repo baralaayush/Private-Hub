@@ -1,27 +1,57 @@
-name: Keep Supabase Awake
+name: Supabase Keep Alive
 
 on:
   schedule:
-    - cron: "0 */8 * * *"   # every 8 hours
-  workflow_dispatch: {}       # allow manual run
+    # Runs every 12 hours (completely safe for the 7-day limit and saves GitHub minutes)
+    - cron: '0 */12 * * *' 
+  workflow_dispatch: # Allows you to trigger it manually
 
 jobs:
-  ping:
+  ping_supabase:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping Supabase (Debug)
-        run: |
-          echo "Calling: $SUPABASE_URL/rest/v1/"
-          response=$(curl -s -w "\n%{http_code}" \
-            -H "apikey: $SUPABASE_ANON_KEY" \
-            "$SUPABASE_URL/rest/v1/")
-          
-          body=$(echo "$response" | sed '$d')
-          status=$(echo "$response" | tail -n1)
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-          echo "HTTP Status: $status"
-          echo "Response Body: $body"
+      - name: Setup Node.js
+        uses: actions/node@v4
+        with:
+          node-level: '20'
 
+      - name: Install Supabase Client
+        run: npm install @supabase/supabase-js
+
+      - name: Execute Live Database Transaction
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          # Project 1 Secrets
+          SUPABASE_URL_1: ${{ secrets.SUPABASE_URL_1 }}
+          SUPABASE_SERVICE_ROLE_KEY_1: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_1 }}
+          # Project 2 Secrets
+          SUPABASE_URL_2: ${{ secrets.SUPABASE_URL_2 }}
+          SUPABASE_SERVICE_ROLE_KEY_2: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_2 }}
+        run: |
+          node -e "
+          const { createClient } = require('@supabase/supabase-js');
+
+          async function ping(url, key, name) {
+            if (!url || !key) return console.log(\`Skipping \${name}: Missing credentials.\`);
+            const supabase = createClient(url, key);
+            
+            // Perform an explicit write to trigger DB activity
+            const { data, error } = await supabase
+              .from('project_pings')
+              .insert([{}])
+              .select();
+
+            if (error) {
+              console.error(\`❌ \${name} Ping Failed:\`, error.message);
+            } else {
+              console.log(\`✅ \${name} Pinged successfully at:\`, data[0].pinged_at);
+            }
+          }
+
+          (async () => {
+            await ping(process.env.SUPABASE_URL_1, process.env.SUPABASE_SERVICE_ROLE_KEY_1, 'Project One');
+            await ping(process.env.SUPABASE_URL_2, process.env.SUPABASE_SERVICE_ROLE_KEY_2, 'Project Two');
+          })();
+          "
